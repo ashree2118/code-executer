@@ -1,9 +1,13 @@
 import Router from 'express';
 import fs from 'node:fs';
 import { execSync } from 'node:child_process';
+import { pool } from "../db/pool.js";
 
 const router = Router();    
-
+router.get("/health/db", async (_, res) => {
+  const result = await pool.query("SELECT NOW()");
+  res.json(result.rows[0]);
+});
 router.post('/submit', (req, res) => {
     const { language, code } = req.body;
 
