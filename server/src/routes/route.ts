@@ -1,14 +1,13 @@
 import Router from 'express';
-import fs from 'node:fs';
-import { execSync } from 'node:child_process';
 import { pool } from "../db/pool.js";
+import { submissionQueue } from "../queue/submission.queue.js";
 
-const router = Router();    
+const router = Router();
 router.get("/health/db", async (_, res) => {
-  const result = await pool.query("SELECT NOW()");
-  res.json(result.rows[0]);
+    const result = await pool.query("SELECT NOW()");
+    res.json(result.rows[0]);
 });
-router.post('/submit', (req, res) => {
+router.post('/submit', async (req, res) => {
     const { language, code } = req.body;
 
     //validate if the code and language are present
@@ -19,22 +18,26 @@ router.post('/submit', (req, res) => {
         return res.status(400).send('Only JavaScript code is supported');
     }
 
-    //save the code to a temp file
-    let path = `temp/${Math.random().toString(36).substr(2, 9)}.js`;
-    
-    //execute the code and return the output
     try {
-        fs.writeFileSync(path, code);
+        const result = await pool.query(
+            `
+INSERT INTO submissions
+(language, code, status)
+VALUES ($1, $2, 'pending')
+RETURNING id
+`,
+            [language, code]
+        );
 
-        const stdout = execSync(`node ${path}`, {
-            encoding: 'utf8',
-            timeout: 5000
-        });
-
-        res.json({
-            stdout,
-            stderr: '',
-            exitCode: 0
+        const submissionId = result.rows[0].id;
+        await submissionQueue.add(
+            "execute-submission",
+            {
+                submissionId,
+            }
+        );
+        return res.json({
+            submissionId,
         });
     } catch (err: any) {
         res.json({
@@ -43,12 +46,27 @@ router.post('/submit', (req, res) => {
             exitCode: err.status ?? 1
         });
     } finally {
-        if (fs.existsSync(path)) {
-            fs.unlinkSync(path);  //destroy the temp file
-        }
         console.log(`Executed code in language: ${language}`);
     }
 
 });
+
+router.get(
+  "/submission/:id",
+  async (req, res) => {
+
+    const result =
+      await pool.query(
+      `
+      SELECT *
+      FROM submissions
+      WHERE id=$1
+      `,
+      [req.params.id]
+    );
+
+    res.json(result.rows[0]);
+  }
+);
 
 export default router;
