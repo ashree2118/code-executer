@@ -1,12 +1,10 @@
 import Router from 'express';
 import { pool } from "../db/pool.js";
 import { submissionQueue } from "../queue/submission.queue.js";
+import { createSubmission, getSubmission } from '../services/submission-service.js';
 
 const router = Router();
-router.get("/health/db", async (_, res) => {
-    const result = await pool.query("SELECT NOW()");
-    res.json(result.rows[0]);
-});
+
 router.post('/submit', async (req, res) => {
     const { language, code } = req.body;
 
@@ -31,11 +29,20 @@ RETURNING id
 
         const submissionId = result.rows[0].id;
         await submissionQueue.add(
-            "execute-submission",
-            {
-                submissionId,
-            }
-        );
+  "execute-submission",
+  {
+    submissionId,
+  },
+  {
+    attempts: 3,
+    backoff: {
+      type: "exponential",
+      delay: 1000,
+    },
+    removeOnComplete: 100,
+    removeOnFail: 50,
+  }
+);
         return res.json({
             submissionId,
         });
@@ -51,22 +58,13 @@ RETURNING id
 
 });
 
-router.get(
-  "/submission/:id",
-  async (req, res) => {
-
-    const result =
-      await pool.query(
-      `
-      SELECT *
-      FROM submissions
-      WHERE id=$1
-      `,
-      [req.params.id]
-    );
-
-    res.json(result.rows[0]);
-  }
-);
+ router.get("/submission/:id", async (req, res) => {
+   try {
+       const submission = await getSubmission(req.params.id);
+       res.json(submission);
+   } catch (error) {
+       res.status(404).send('Submission not found');
+   }
+});
 
 export default router;
