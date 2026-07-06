@@ -1,41 +1,34 @@
 import fs from "node:fs";
-import { execSync } from "node:child_process";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
 
-export async function executeJavascript(
-  code: string
-) {
-  const path =
-    `temp/${Math.random().toString(36).slice(2)}.js`;
+const execAsync = promisify(exec);
+
+export async function executeJavascript(code: string) {
+  const path = `temp/${Math.random().toString(36).slice(2)}.js`;
 
   try {
-    fs.writeFileSync(path, code);
+    await fs.promises.writeFile(path, code);
 
-    const stdout = execSync(
-      `node ${path}`,
-      {
-        encoding: "utf8",
-        timeout: 5000,
-      }
-    );
+    // Running asynchronously so other queue items or workers aren't blocked
+    const { stdout, stderr } = await execAsync(`node ${path}`, {
+      timeout: 5000, // Kills the process after 5s
+    });
 
     return {
-      stdout,
-      stderr: "",
+      stdout: stdout.toString(),
+      stderr: stderr.toString(),
       exitCode: 0,
     };
   } catch (err: any) {
     return {
-      stdout:
-        err.stdout?.toString() ?? "",
-      stderr:
-        err.stderr?.toString() ??
-        err.message,
-      exitCode:
-        err.status ?? 1,
+      stdout: err.stdout?.toString() ?? "",
+      stderr: err.stderr?.toString() ?? err.message,
+      exitCode: err.code ?? 1, // exec returns .code for exit codes
     };
   } finally {
     if (fs.existsSync(path)) {
-      fs.unlinkSync(path);
+      await fs.promises.unlink(path).catch(() => {});
     }
   }
 }
