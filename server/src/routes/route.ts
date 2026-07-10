@@ -10,9 +10,6 @@ router.post('/submit', async (req, res) => {
     if (!code || !language) {
         return res.status(400).send('Code and language are required');
     }
-    if (language !== 'javascript') {
-        return res.status(400).send('Only JavaScript code is supported');
-    }
 
     try {
         const submissionId = await createSubmission(language, code);

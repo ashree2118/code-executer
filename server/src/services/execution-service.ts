@@ -1,8 +1,16 @@
 import fs from "node:fs";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import Docker from "dockerode";
 
 const execAsync = promisify(exec);
+export const docker = new Docker();
+
+export const images = {
+  python: "python-runner",
+  javascript: "node-runner",
+  java: "java-runner",
+};
 
 export async function executeJavascript(code: string) {
   const path = `temp/${Math.random().toString(36).slice(2)}.js`;
