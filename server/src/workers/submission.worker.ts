@@ -1,12 +1,13 @@
 import { Worker } from "bullmq";
 import { redisConnection } from "../lib/redis.js";
-import { executeCode } from "../services/execution-service.js";
+import { evaluateSubmission } from "../services/execution-service.js";
 import { failedQueue } from "../queue/failed.queue.js";
 import {
   getSubmission,
   updateSubmissionStatus,
   markFailed,
 } from "../services/submission-service.js";
+import { Verdict } from "../types/execution.js";
 
 const worker = new Worker(
   "submission-queue",
@@ -22,37 +23,32 @@ const worker = new Worker(
     await updateSubmissionStatus(submissionId, "running");
 
     try {
-      // Execute inside Docker
-      const output = await executeCode(
-        submission.language as "javascript" | "python" | "java",
-        submission.code
-      );
+      const evaluation = await evaluateSubmission({
+        language: submission.language,
+        code: submission.code,
+        testCases: submission.test_cases ?? [],
+      });
 
-      if (output.exitCode !== 0) {
+      if (evaluation.verdict !== Verdict.Accepted) {
         await markFailed(
           submissionId,
-          output.stdout,
-          output.stderr
+          evaluation.results.map((result) => result.stdout).join("\n"),
+          evaluation.results.map((result) => result.stderr).join("\n")
         );
 
-        return output;
+        return evaluation;
       }
 
       await updateSubmissionStatus(
         submissionId,
         "done",
-        output.stdout,
-        output.stderr
+        evaluation.results.map((result) => result.stdout).join("\n"),
+        evaluation.results.map((result) => result.stderr).join("\n")
       );
 
-      return output;
+      return evaluation;
     } catch (error: any) {
-      await markFailed(
-        submissionId,
-        "",
-        error.message
-      );
-
+      await markFailed(submissionId, "", error.message);
       throw error;
     }
   },
