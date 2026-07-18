@@ -1,42 +1,103 @@
 import fs from "node:fs";
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
+import path from "node:path";
+import os from "node:os";
 import Docker from "dockerode";
 
-const execAsync = promisify(exec);
-export const docker = new Docker();
+const docker = new Docker();
 
-export const images = {
-  python: "python-runner",
-  javascript: "node-runner",
-  java: "java-runner",
+type Language = "javascript" | "python" | "java";
+
+const runtimeConfig: Record<
+  Language,
+  {
+    image: string;
+    filename: string;
+    command: string[];
+  }
+> = {
+  javascript: {
+    image: "node-runner",
+    filename: "main.js",
+    command: ["node", "/app/main.js"],
+  },
+
+  python: {
+    image: "python-runner",
+    filename: "main.py",
+    command: ["python3", "/app/main.py"],
+  },
+
+  java: {
+    image: "java-runner",
+    filename: "Main.java",
+    command: ["java", "Main"],
+  },
 };
 
-export async function executeJavascript(code: string) {
-  const path = `temp/${Math.random().toString(36).slice(2)}.js`;
+export async function executeCode(
+  language: Language,
+  code: string
+) {
+  const config = runtimeConfig[language];
+
+  if (!config) {
+    throw new Error(`Unsupported language: ${language}`);
+  }
+
+  // Create unique temp directory
+  const tempDir = await fs.promises.mkdtemp(
+    path.join(os.tmpdir(), "submission-")
+  );
+
+  const sourceFile = path.join(tempDir, config.filename);
+
+  await fs.promises.writeFile(sourceFile, code);
+
+  let container: Docker.Container | null = null;
 
   try {
-    await fs.promises.writeFile(path, code);
+    container = await docker.createContainer({
+      Image: config.image,
 
-    // Running asynchronously so other queue items or workers aren't blocked
-    const { stdout, stderr } = await execAsync(`node ${path}`, {
-      timeout: 5000, // Kills the process after 5s
+      Cmd: config.command,
+
+      WorkingDir: "/app",
+
+      HostConfig: {
+        Binds: [`${tempDir}:/app`],
+      },
+    });
+
+    await container.start();
+
+    const result = await container.wait();
+
+    const logs = await container.logs({
+      stdout: true,
+      stderr: true,
     });
 
     return {
-      stdout: stdout.toString(),
-      stderr: stderr.toString(),
-      exitCode: 0,
+      stdout: logs.toString(),
+      stderr: "",
+      exitCode: result.StatusCode ?? 0,
     };
   } catch (err: any) {
     return {
-      stdout: err.stdout?.toString() ?? "",
-      stderr: err.stderr?.toString() ?? err.message,
-      exitCode: err.code ?? 1, // exec returns .code for exit codes
+      stdout: "",
+      stderr: err.message,
+      exitCode: 1,
     };
   } finally {
-    if (fs.existsSync(path)) {
-      await fs.promises.unlink(path).catch(() => {});
+    if (container) {
+      await container.remove({
+        force: true,
+      }).catch(() => {});
     }
+
+    await fs.promises.rm(tempDir, {
+      recursive: true,
+      force: true,
+    });
   }
 }
