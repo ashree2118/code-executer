@@ -163,14 +163,16 @@ export async function executeCode(
 export async function evaluateSubmission({
   language,
   code,
+  stdin = "",
   testCases,
 }: {
   language: Language;
   code: string;
+  stdin?: string;
   testCases: TestCase[];
 }): Promise<SubmissionEvaluationResult> {
   if (testCases.length === 0) {
-    const result = await executeCode(language, code);
+    const result = await executeCode(language, code, stdin);
     return {
       verdict: result.verdict ?? Verdict.Accepted,
       results: [result],

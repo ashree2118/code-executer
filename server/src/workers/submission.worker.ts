@@ -7,12 +7,21 @@ import {
   updateSubmissionStatus,
   markFailed,
 } from "../services/submission-service.js";
+import { cacheService, type CachedExecutionResult } from "../services/cache.service.js";
 import { Verdict } from "../types/execution.js";
 
-const worker = new Worker(
+const RESULT_CACHE_TTL_SECONDS = 3600;
+
+type SubmissionJobData = {
+  submissionId: string;
+  cacheKey?: string;
+  stdin?: string;
+};
+
+const worker = new Worker<SubmissionJobData>(
   "submission-queue",
   async (job) => {
-    const { submissionId } = job.data;
+    const { submissionId, cacheKey, stdin = "" } = job.data;
 
     const submission = await getSubmission(submissionId);
 
@@ -26,6 +35,7 @@ const worker = new Worker(
       const evaluation = await evaluateSubmission({
         language: submission.language,
         code: submission.code,
+        stdin,
         testCases: submission.test_cases ?? [],
       });
 
@@ -45,6 +55,18 @@ const worker = new Worker(
         evaluation.results.map((result) => result.stdout).join("\n"),
         evaluation.results.map((result) => result.stderr).join("\n")
       );
+
+      const result = evaluation.results[0];
+      if (cacheKey && result) {
+        const cachedResult: CachedExecutionResult = {
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.exitCode,
+          executionTime: result.executionTime,
+        };
+
+        await cacheService.set(cacheKey, cachedResult, RESULT_CACHE_TTL_SECONDS);
+      }
 
       return evaluation;
     } catch (error: any) {
